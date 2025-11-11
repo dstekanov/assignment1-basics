@@ -13,6 +13,8 @@ import pathlib
 
 import cProfile
 import pstats
+import tracemalloc
+import pickle
 
 from multiprocessing import Pool
 
@@ -210,23 +212,31 @@ def update_pair_counts_for_merge(
     """
     Incrementally update pair counts after a merge.
     Only updates tokens that contain the merged pair.
+    Optimized: uses 'in' operator which is O(n) but with early exit.
     """
     a, b = merged_pair
     
     for token_idx, indicies in enumerate(token_indicies):
-        freq = freqs[token_idx]
+        # Fast check: does this token contain the merged pair?
+        # This is still O(n) but much faster than the while loop
+        if len(indicies) < 2:
+            continue
+            
+        # Quick check: if neither a nor b is in token, skip
+        if a not in indicies and b not in indicies:
+            continue
         
-        # Check if this token contains the merged pair
-        i = 0
+        # Check for actual pair (a, b)
         has_pair = False
-        while i < len(indicies) - 1:
+        for i in range(len(indicies) - 1):
             if indicies[i] == a and indicies[i + 1] == b:
                 has_pair = True
                 break
-            i += 1
         
         if not has_pair:
             continue
+        
+        freq = freqs[token_idx]
         
         # Get old pairs before merge
         old_pairs = get_pairs_from_token(indicies)
@@ -299,10 +309,11 @@ FIXTURES_PATH = "/Users/dstekanov/Documents/own_projects/assignment1-basics/data
 if __name__ == "__main__":
 
     start_time = time.time()
+    tracemalloc.start()
 
     special_tokens = ["<|endoftext|>"]
     input_path = FIXTURES_PATH + "/TinyStoriesV2-GPT4-train.txt"
-    vocab_size = 500
+    vocab_size = 10000
     
     print(f"Training BPE on: '{input_path}' with {vocab_size} vocab_size...")
 
@@ -311,14 +322,33 @@ if __name__ == "__main__":
 
     result = train_bpe(input_path, vocab_size, special_tokens)
 
+    current, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    print(f"Peak memory usage: {peak / 1024 / 1024 / 1024:.2f} GB")
+    print(f"Execution time: {time.time() - start_time:.2f} seconds")
+
     profiler.disable()
 
     stats = pstats.Stats(profiler)
     stats.sort_stats("cumulative")
     stats.print_stats(20)
 
-    print("Vocab: ", result.vocab)
-    print("Merges: ", result.merges)
+    # Save to disk
+    with open("tinystories_vocab.pkl", "wb") as f:
+        pickle.dump(result.vocab, f)
 
-    print("Execution time:", round(time.time() - start_time, 3), "seconds")
+    with open("tinystories_merges.pkl", "wb") as f:
+        pickle.dump(result.merges, f)
 
+    print("Saved vocab and merges to disk")
+
+    # Find longest token
+    longest_token = max(result.vocab.values(), key=len)
+    longest_token_id = [k for k, v in result.vocab.items() if v == longest_token][0]
+
+    print(f"\nLongest token:")
+    print(f"  ID: {longest_token_id}")
+    print(f"  Length: {len(longest_token)} bytes")
+    print(f"  Value: {longest_token}")
+    print(f"  As string: {longest_token.decode('utf-8', errors='replace')}")

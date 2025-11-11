@@ -253,4 +253,3 @@ if __name__ == "__main__":
     print("Merges: ", result.merges)
 
     print("Execution time:", round(time.time() - start_time, 3), "seconds")
-
