@@ -51,8 +51,8 @@ def train_bpe(input_path: str | os.PathLike, vocab_size: int, special_tokens: li
     num_merges = vocab_size - len(vocab)
     print("Number of merging: ", num_merges)
 
-    # Build initial pair counts (cache)
-    pair_counts = count_pair_frequencies(token_indicies, freqs)
+    # Build initial pair counts and position index (cache)
+    pair_counts, pair_positions = build_pair_index(token_indicies, freqs)
     
     for i in range(num_merges):
         best_pair, best_count = get_best_pair(vocab, pair_counts)
@@ -62,8 +62,8 @@ def train_bpe(input_path: str | os.PathLike, vocab_size: int, special_tokens: li
         merges[best_pair] = new_id
         next_id += 1
 
-        # Update pair counts incrementally
-        update_pair_counts_for_merge(token_indicies, freqs, pair_counts, best_pair, new_id)
+        # Update pair counts incrementally using position index
+        update_pair_counts_with_index(token_indicies, freqs, pair_counts, pair_positions, best_pair, new_id)
 
     merges_list = [(vocab[pair[0]], vocab[pair[1]]) for pair, _ in merges.items()]
 
@@ -202,40 +202,51 @@ def get_pairs_from_token(indicies: List[int]) -> List[Tuple[int, int]]:
     """Extract all adjacent pairs from a token."""
     return [(indicies[i], indicies[i + 1]) for i in range(len(indicies) - 1)]
 
-def update_pair_counts_for_merge(
+def build_pair_index(token_indicies: List[List[int]], freqs: List[int]) -> Tuple[Counter, Dict]:
+    """
+    Build initial pair counts and position index.
+    
+    Returns:
+        pair_counts: Counter of pair frequencies
+        pair_positions: {pair: set of token indices that contain this pair}
+    """
+    pair_counts = Counter()
+    pair_positions = {}
+    
+    for token_idx, (indicies, freq) in enumerate(zip(token_indicies, freqs)):
+        for i in range(len(indicies) - 1):
+            pair = (indicies[i], indicies[i + 1])
+            pair_counts[pair] += freq
+            
+            if pair not in pair_positions:
+                pair_positions[pair] = set()
+            pair_positions[pair].add(token_idx)
+    
+    return pair_counts, pair_positions
+
+def update_pair_counts_with_index(
     token_indicies: List[List[int]],
     freqs: List[int],
     pair_counts: Counter,
+    pair_positions: Dict[Tuple[int, int], set],
     merged_pair: Tuple[int, int],
     new_id: int
 ):
     """
-    Incrementally update pair counts after a merge.
-    Only updates tokens that contain the merged pair.
-    Optimized: uses 'in' operator which is O(n) but with early exit.
+    Incrementally update pair counts after a merge using position index.
+    O(1) lookup of affected tokens instead of O(n) iteration.
     """
-    a, b = merged_pair
+    # Get affected tokens directly from index (O(1)!)
+    if merged_pair not in pair_positions:
+        return
     
-    for token_idx, indicies in enumerate(token_indicies):
-        # Fast check: does this token contain the merged pair?
-        # This is still O(n) but much faster than the while loop
-        if len(indicies) < 2:
-            continue
-            
-        # Quick check: if neither a nor b is in token, skip
-        if a not in indicies and b not in indicies:
-            continue
-        
-        # Check for actual pair (a, b)
-        has_pair = False
-        for i in range(len(indicies) - 1):
-            if indicies[i] == a and indicies[i + 1] == b:
-                has_pair = True
-                break
-        
-        if not has_pair:
-            continue
-        
+    affected_tokens = list(pair_positions[merged_pair])  # Copy to avoid modification during iteration
+    
+    # Remove merged pair from index
+    del pair_positions[merged_pair]
+    
+    for token_idx in affected_tokens:
+        indicies = token_indicies[token_idx]
         freq = freqs[token_idx]
         
         # Get old pairs before merge
@@ -253,9 +264,20 @@ def update_pair_counts_for_merge(
             pair_counts[pair] -= freq
             if pair_counts[pair] <= 0:
                 del pair_counts[pair]
+            
+            # Update position index: remove this token from old pair
+            if pair in pair_positions:
+                pair_positions[pair].discard(token_idx)
+                if not pair_positions[pair]:  # Empty set
+                    del pair_positions[pair]
         
         for pair in new_pairs:
             pair_counts[pair] += freq
+            
+            # Update position index: add this token to new pair
+            if pair not in pair_positions:
+                pair_positions[pair] = set()
+            pair_positions[pair].add(token_idx)
 
 def find_chunk_boundaries(
     file: BinaryIO,
