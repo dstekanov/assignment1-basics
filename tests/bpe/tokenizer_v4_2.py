@@ -149,14 +149,6 @@ def tokens_to_indicies_lists(pre_counts: Counter):
         freqs.append(freq)
     return token_indicies, freqs
 
-def count_pair_frequencies(token_indicies: List[List[int]], freqs: List[int]) -> Counter:
-    """Count how often each adjacent byte-pair occurs, weighted by token frequency."""
-    counts = Counter()
-    for indicies, f in zip(token_indicies, freqs):
-        for i in range(len(indicies) - 1):
-            counts[(indicies[i], indicies[i + 1])] += f
-    return counts
-
 def apply_merge_on_token(indicies: List[int], pair: Tuple[int, int], new_id: int) -> List[int]:
     """Replace non-overlapping occurrences of pair (a,b) with new_id."""
     a, b = pair
@@ -174,30 +166,6 @@ def apply_merge_on_token(indicies: List[int], pair: Tuple[int, int], new_id: int
 
     return new_indicies
 
-def apply_merge_and_get_affected(
-    token_indicies: List[List[int]], 
-    pair: Tuple[int, int], 
-    new_id: int
-) -> List[int]:
-    """
-    Apply merge to all tokens and return indices of affected tokens.
-    
-    Returns:
-        List of token indices that were modified
-    """
-    affected = []
-    
-    for token_idx in range(len(token_indicies)):
-        old_indicies = token_indicies[token_idx]
-        new_indicies = apply_merge_on_token(old_indicies, pair, new_id)
-        
-        # Check if token changed
-        if len(old_indicies) != len(new_indicies):
-            token_indicies[token_idx] = new_indicies
-            affected.append(token_idx)
-    
-    return affected
-    
 def get_pairs_from_token(indicies: List[int]) -> List[Tuple[int, int]]:
     """Extract all adjacent pairs from a token."""
     return [(indicies[i], indicies[i + 1]) for i in range(len(indicies) - 1)]
@@ -334,8 +302,8 @@ if __name__ == "__main__":
     tracemalloc.start()
 
     special_tokens = ["<|endoftext|>"]
-    input_path = FIXTURES_PATH + "/TinyStoriesV2-GPT4-train.txt"
-    vocab_size = 10000
+    input_path = FIXTURES_PATH + "/owt_valid.txt"
+    vocab_size = 32000    
     
     print(f"Training BPE on: '{input_path}' with {vocab_size} vocab_size...")
 
@@ -357,10 +325,10 @@ if __name__ == "__main__":
     stats.print_stats(20)
 
     # Save to disk
-    with open("tinystories_vocab.pkl", "wb") as f:
+    with open("owt_vocab.pkl", "wb") as f:
         pickle.dump(result.vocab, f)
 
-    with open("tinystories_merges.pkl", "wb") as f:
+    with open("owt_merges.pkl", "wb") as f:
         pickle.dump(result.merges, f)
 
     print("Saved vocab and merges to disk")
